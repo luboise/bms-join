@@ -232,11 +232,6 @@ fn main() {
 
         match get_next_command() {
             Command::Replace => {
-                if let Err(e) = bms.reload() {
-                    eprintln!("Error details: {}", e);
-                    continue;
-                }
-
                 print!(
                     "Enter the ID (eg. 0A) of the keysound which you would like to replace with: "
                 );
@@ -252,6 +247,11 @@ fn main() {
                         .unwrap();
 
                 if let Ok(id) = as_id(&id_line) {
+                    // Reload after getting user input
+                    if let Err(e) = bms.reload() {
+                        eprintln!("Error details: {}", e);
+                        continue;
+                    }
                     if !bms.has_keysound(id) {
                         eprintln!("No keysound exists with id {}", as_str(id));
                         continue;
@@ -266,6 +266,16 @@ fn main() {
 
                     let res_ids: Result<Vec<u64>, ParseIntError> =
                         id_list.iter().map(as_id).collect();
+
+                    // Recheck the id in case the user edited the file in their own editor
+                    if let Err(e) = bms.reload() {
+                        eprintln!("Error details: {}", e);
+                        continue;
+                    }
+                    if !bms.has_keysound(id) {
+                        eprintln!("No keysound exists with id {}", as_str(id));
+                        continue;
+                    }
 
                     match res_ids {
                         Ok(ids) => {
@@ -298,12 +308,9 @@ fn main() {
                                         continue;
                                     }
 
-                                    // If special and not bg sound
-                                    if line.chars().nth(4).unwrap() == '0'
-                                        && line.chars().nth(5).unwrap() != '1'
-                                    {
-                                        continue;
-                                    } else if line.chars().nth(4).unwrap() != '1' {
+                                    let channel = line.get(4..6).unwrap();
+
+                                    if channel != "01" && channel.chars().nth(1).unwrap() != '1' {
                                         continue;
                                     }
 

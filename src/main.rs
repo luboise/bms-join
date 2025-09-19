@@ -32,6 +32,8 @@ impl Keysound {
 
 #[derive(Debug, Clone)]
 struct BMSFile {
+    path: PathBuf,
+
     head: Vec<String>,
     keysounds: Vec<Keysound>,
     tail: Vec<String>,
@@ -71,6 +73,7 @@ impl BMSFile {
             });
 
         Ok(BMSFile {
+            path: path.clone(),
             head,
             keysounds,
             tail,
@@ -110,6 +113,33 @@ impl BMSFile {
     fn keysounds(&self) -> &[Keysound] {
         &self.keysounds
     }
+
+    fn reload(&mut self) -> Result<(), std::io::Error> {
+        println!("Reloading {}", self.path.display());
+
+        match Self::from_path(&self.path) {
+            Ok(new_bms) => {
+                self.head = new_bms.head;
+                self.keysounds = new_bms.keysounds;
+                self.tail = new_bms.tail;
+
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("Error reloading the BMS file. Check that it still exists.");
+                self.head.clear();
+                self.keysounds.clear();
+                self.tail.clear();
+
+                Err(e)
+            }
+        }
+    }
+
+    fn save(&self) -> Result<(), std::io::Error> {
+        println!("Saving {}", self.path.display());
+        fs::write(&self.path, self.to_bytes())
+    }
 }
 
 pub enum Command {
@@ -124,9 +154,17 @@ fn get_next_command() -> Command {
     println!(
         "\nWhat would you like to do:
         r - Replace one or more keysounds with another one
+        q - Quit the program\n\n"
+    );
+
+    /*
+    println!(
+        "\nWhat would you like to do:
+        r - Replace one or more keysounds with another one
         m - Merge multiple keysounds into a single keysound
         q - Quit the program\n\n"
     );
+    */
 
     let input = get_string();
 
@@ -194,6 +232,11 @@ fn main() {
 
         match get_next_command() {
             Command::Replace => {
+                if let Err(e) = bms.reload() {
+                    eprintln!("Error details: {}", e);
+                    continue;
+                }
+
                 print!(
                     "Enter the ID (eg. 0A) of the keysound which you would like to replace with: "
                 );
@@ -286,6 +329,10 @@ fn main() {
                                     }
                                 }
                             });
+
+                            if let Err(e) = bms.save() {
+                                eprintln!("Error details: {}", e);
+                            }
                         }
                         Err(e) => eprintln!("Error getting input ids: {}", e),
                     }
@@ -303,10 +350,4 @@ fn main() {
             Command::Quit => quit = true,
         }
     }
-
-    dbg!(&bms);
-
-    fs::write(bms_path, bms.to_bytes()).expect("Unable to write file.");
-
-    // #WAV01 5-VEC1 Sounds 044 C_000.wav
 }

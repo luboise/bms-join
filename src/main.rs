@@ -406,7 +406,11 @@ fn main() {
                         let keep = !unused_ids.contains(&keysound.keysound_id);
 
                         if !keep && delete_files {
-                            let file_path = PathBuf::from(keysound.keysound_file.clone());
+                            let file_path = bms
+                                .path
+                                .parent()
+                                .unwrap()
+                                .join(keysound.keysound_file.clone());
 
                             if file_path.exists() {
                                 if file_path.is_file() {
@@ -416,6 +420,8 @@ fn main() {
                                         // Keep the keysound if theres an error deleting the file
                                         return true;
                                     }
+
+                                    println!("Removed {}", file_path.display());
                                 } else {
                                     eprintln!(
                                         "File {} exists, but is not a regular file.",

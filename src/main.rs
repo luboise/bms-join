@@ -57,9 +57,9 @@ impl BMSFile {
                 if line.starts_with("#WAV") {
                     keysounds.push(Keysound::from_line(&line).expect("Can't parse line."));
                 } else if keysounds.is_empty() {
-                    head.push(Line::new(line));
+                    head.push(Line::new(&line));
                 } else {
-                    tail.push(Line::new(line));
+                    tail.push(Line::new(&line));
                 }
             });
 
@@ -75,7 +75,7 @@ impl BMSFile {
         let mut strings: Vec<String> = Vec::new();
 
         for line in &self.head {
-            strings.push(line.line().trim_end().to_string())
+            strings.push(line.to_string());
         }
 
         for keysound in &self.keysounds {
@@ -83,7 +83,7 @@ impl BMSFile {
         }
 
         for line in &self.tail {
-            strings.push(line.line().trim_end().to_string())
+            strings.push(line.to_string());
         }
 
         strings.join("\n").as_bytes().to_vec()
@@ -95,17 +95,17 @@ impl BMSFile {
 
     fn uses_keysound(&self, keysound_id: u64) -> bool {
         // Make sure the keysound actually exists
-        if !self.get_keysound(keysound_id).is_some() {
+        if self.get_keysound(keysound_id).is_none() {
             return false;
         }
 
-        return self.tail.iter().any(|line| {
-            line.is_note()
-                && line
-                    .get_keysounds()
-                    .iter()
-                    .any(|keysound| *keysound == keysound_id)
-        });
+        self.tail.iter().any(|line| {
+            if let Some(note) = line.as_note() {
+                note.uses_keysound(keysound_id)
+            } else {
+                false
+            }
+        })
     }
 
     fn get_keysound(&self, id: u64) -> Option<&Keysound> {
@@ -313,7 +313,9 @@ fn main() {
                                     bms.keysounds.retain(|ks| ks.keysound_id != *old_id);
 
                                     for line in &mut bms.tail {
-                                        line.replace_keysounds(*old_id, new_id)
+                                        if let Line::Note(note) = line {
+                                            note.replace_keysounds(*old_id, new_id);
+                                        }
                                     }
                                 });
 
@@ -335,7 +337,7 @@ fn main() {
                 let unused_keysounds: Vec<&Keysound> = bms
                     .keysounds
                     .iter()
-                    .filter(|keysound| !bms.has_keysound(keysound.keysound_id))
+                    .filter(|keysound| !bms.uses_keysound(keysound.keysound_id))
                     .collect();
 
                 println!(

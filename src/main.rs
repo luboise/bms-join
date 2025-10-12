@@ -284,14 +284,14 @@ fn main() {
 
                     match res_ids {
                         Ok(ids) => {
-                            let old_ids: Vec<u64> = ids
+                            let bad_ids: Vec<u64> = ids
                                 .iter()
                                 .filter(|old_id| !bms.has_keysound(**old_id))
                                 .copied()
                                 .collect();
 
-                            if !old_ids.is_empty() {
-                                old_ids.iter().for_each(|id| {
+                            if !bad_ids.is_empty() {
+                                bad_ids.iter().for_each(|id| {
                                     eprintln!("ID {} doesn't exist in the bms file.", as_str(*id));
                                 });
 
@@ -300,13 +300,14 @@ fn main() {
 
                             // Skip invalid keysounds
                             if ids.iter().any(|old_id| !bms.has_keysound(*old_id)) {
+                                eprintln!("Keysound error. Skipping replacement.");
                                 continue;
                             }
 
                             let new_id_upper = &new_id_line.to_uppercase();
 
                             if let Ok(new_id) = as_id(new_id_upper) {
-                                old_ids.iter().for_each(|old_id| {
+                                ids.iter().for_each(|old_id| {
                                     println!("Replacing {} with {}", as_str(*old_id), as_str(id));
 
                                     // Delete the old keysound
@@ -314,6 +315,11 @@ fn main() {
 
                                     for line in &mut bms.tail {
                                         if let Line::Note(note) = line {
+                                            println!(
+                                                "Replacing keysound {} with {}",
+                                                *old_id, new_id
+                                            );
+
                                             note.replace_keysounds(*old_id, new_id);
                                         }
                                     }
@@ -345,8 +351,8 @@ fn main() {
                     unused_keysounds
                         .to_owned()
                         .iter()
-                        .map(|keysound| keysound.keysound_id)
-                        .collect::<Vec<u64>>()
+                        .map(|keysound| as_str(keysound.keysound_id))
+                        .collect::<Vec<String>>()
                 );
             }
 

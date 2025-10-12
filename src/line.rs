@@ -56,8 +56,21 @@ impl Note {
             return None;
         }
 
-        let measure = (line[1..4]).parse::<u32>().expect("Bad measure from line.");
-        let channel = (line[4..6]).parse::<u32>().expect("Bad channel from line.");
+        let measure = match (line[1..4]).parse::<u32>() {
+            Ok(v) => v,
+            Err(e) => {
+                // eprintln!("Error parsing measure: {}", e);
+                return None;
+            }
+        };
+
+        let channel = match (line[4..6]).parse::<u32>() {
+            Ok(v) => v,
+            Err(e) => {
+                // eprintln!("Error parsing channel: {}", e);
+                return None;
+            }
+        };
 
         let mut keysounds = vec![];
 
@@ -68,7 +81,15 @@ impl Note {
             for i in (0..body.len()).step_by(2) {
                 let chunk = &body[i..i + 2];
 
-                keysounds.push(as_id(chunk).unwrap());
+                let keysound_id = match as_id(chunk) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // eprintln!("Error parsing keysound ID: {}", e);
+                        return None;
+                    }
+                };
+
+                keysounds.push(keysound_id);
             }
         }
 
@@ -80,54 +101,25 @@ impl Note {
     }
 
     pub(crate) fn replace_keysounds(&mut self, old_id: u64, new_id: u64) -> Option<()> {
-        /*
-                if !self.is_note() {
-                    return;
-                }
-
-         if !self.is_note() || (channel != "01" && channel.chars().nth(1).unwrap() != '1') {
-                    return keysounds;
-                }
-        */
-
         // If its not a regular p1 note, return false
-        if self.channel < as_id("10".to_string()).unwrap() as u32 && self.channel != 0 {
+        if self.channel < as_id("10").unwrap() as u32 && self.channel % 36 != 1 {
+            eprintln!("Refusing to replace keysounds.");
             return None;
         }
 
         self.keysounds = self
             .keysounds
             .iter()
-            .map(|keysound| match keysound {
-                old_id => new_id,
-                _ => *keysound,
+            .map(|keysound| {
+                if *keysound == old_id {
+                    new_id
+                } else {
+                    *keysound
+                }
             })
             .collect();
 
         Some(())
-
-        /*
-        let old_id_str = as_str(old_id);
-        let new_id_str = as_str(new_id);
-
-        if let Some(pos) = self.line().find(':') {
-            // let prefix = &self.line()[..=pos]; // includes ':'
-            let mut new_body = String::with_capacity(self.len() - pos - 1);
-
-            let body = &self.line()[pos + 1..];
-
-            for i in (0..body.len()).step_by(2) {
-                let chunk = &body[i..i + 2];
-                if chunk == old_id_str {
-                    new_body.push_str(&new_id_str);
-                } else {
-                    new_body.push_str(chunk);
-                }
-            }
-
-            self.line.replace_range(pos + 1.., &new_body);
-        }
-        */
     }
 
     pub fn channel(&self) -> u32 {
@@ -158,8 +150,8 @@ impl Note {
     }
 }
 
-impl ToString for Note {
-    fn to_string(&self) -> String {
+impl Display for Note {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let keysounds_string: String = self
             .keysounds
             .iter()
@@ -167,7 +159,8 @@ impl ToString for Note {
             .collect::<Vec<String>>()
             .join("");
 
-        format!(
+        write!(
+            f,
             "#{:03}{:02}:{}",
             self.measure, self.channel, keysounds_string
         )
@@ -289,5 +282,27 @@ mod tests {
                 .to_string(),
             line
         );
+    }
+
+    #[test]
+    fn test_replace_keysounds() {
+        let mut note = Note {
+            measure: 1,
+            channel: as_id("11").unwrap() as u32,
+            keysounds: vec![18, 19, 20],
+        };
+
+        assert!(note.replace_keysounds(18, 19).is_some());
+
+        assert_eq!(note.keysounds, vec![19, 19, 20]);
+    }
+
+    #[test]
+    fn test_replace_keysounds_2() {
+        let mut note = Note::new("#05201:0000SU0000SV0000").unwrap();
+
+        note.replace_keysounds(as_id("SU").unwrap(), as_id("SV").unwrap());
+
+        assert_eq!(note.to_string(), "#05201:0000SV0000SV0000");
     }
 }

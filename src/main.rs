@@ -5,8 +5,12 @@ use std::{
     path::PathBuf,
 };
 
-use radix_fmt::radix_36;
-use regex::Regex;
+pub mod bms;
+pub mod line;
+
+use line::Line;
+
+use crate::bms::{as_id, as_str};
 
 #[derive(Debug, Clone)]
 struct Keysound {
@@ -34,22 +38,9 @@ impl Keysound {
 struct BMSFile {
     path: PathBuf,
 
-    head: Vec<String>,
+    head: Vec<Line>,
     keysounds: Vec<Keysound>,
-    tail: Vec<String>,
-}
-
-fn as_id<T: AsRef<str>>(chars: T) -> Result<u64, ParseIntError> {
-    u64::from_str_radix(&chars.as_ref().to_string().to_uppercase(), 36)
-}
-
-fn as_str(id: u64) -> String {
-    let ret = format!("{:0>2}", radix_36(id)).to_uppercase();
-    if ret.len() == 1 {
-        "0".to_owned() + &ret
-    } else {
-        ret
-    }
+    tail: Vec<Line>,
 }
 
 impl BMSFile {
@@ -66,9 +57,9 @@ impl BMSFile {
                 if line.starts_with("#WAV") {
                     keysounds.push(Keysound::from_line(&line).expect("Can't parse line."));
                 } else if keysounds.is_empty() {
-                    head.push(line);
+                    head.push(Line::new(line));
                 } else {
-                    tail.push(line);
+                    tail.push(Line::new(line));
                 }
             });
 
@@ -83,16 +74,16 @@ impl BMSFile {
     fn to_bytes(&self) -> Vec<u8> {
         let mut strings: Vec<String> = Vec::new();
 
-        for string in &self.head {
-            strings.push(string.trim_end().to_string())
+        for line in &self.head {
+            strings.push(line.line().trim_end().to_string())
         }
 
         for keysound in &self.keysounds {
             strings.push(keysound.to_string())
         }
 
-        for string in &self.tail {
-            strings.push(string.trim_end().to_string())
+        for line in &self.tail {
+            strings.push(line.line().trim_end().to_string())
         }
 
         strings.join("\n").as_bytes().to_vec()
@@ -100,6 +91,21 @@ impl BMSFile {
 
     fn has_keysound(&self, keysound_id: u64) -> bool {
         self.get_keysound(keysound_id).is_some()
+    }
+
+    fn uses_keysound(&self, keysound_id: u64) -> bool {
+        // Make sure the keysound actually exists
+        if !self.get_keysound(keysound_id).is_some() {
+            return false;
+        }
+
+        return self.tail.iter().any(|line| {
+            line.is_note()
+                && line
+                    .get_keysounds()
+                    .iter()
+                    .any(|keysound| *keysound == keysound_id)
+        });
     }
 
     fn get_keysound(&self, id: u64) -> Option<&Keysound> {
@@ -145,6 +151,7 @@ impl BMSFile {
 pub enum Command {
     Replace,
     Merge,
+    HandleUnused,
     Quit,
     Unknown(char),
     Empty,
@@ -154,6 +161,7 @@ fn get_next_command() -> Command {
     println!(
         "\nWhat would you like to do:
         r - Replace one or more keysounds with another one
+        u - View unused keysounds.
         q - Quit the program\n\n"
     );
 
@@ -175,6 +183,7 @@ fn get_next_command() -> Command {
     match input.chars().next().unwrap() {
         'r' => Command::Replace,
         'm' => Command::Merge,
+        'u' => Command::HandleUnused,
         'q' => Command::Quit,
         val => Command::Unknown(val),
     }
@@ -238,15 +247,11 @@ fn main() {
 
                 io::stdout().flush().expect("Unable to flush stdout.");
 
-                let id_line = get_string();
+                let new_id_line = get_string();
 
                 println!();
 
-                let note_regex =
-                    Regex::new(r"#[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]:")
-                        .unwrap();
-
-                if let Ok(id) = as_id(&id_line) {
+                if let Ok(id) = as_id(&new_id_line) {
                     // Reload after getting user input
                     if let Err(e) = bms.reload() {
                         eprintln!("Error details: {}", e);
@@ -279,66 +284,44 @@ fn main() {
 
                     match res_ids {
                         Ok(ids) => {
-                            let bad_ids: Vec<u64> = ids
+                            let old_ids: Vec<u64> = ids
                                 .iter()
                                 .filter(|old_id| !bms.has_keysound(**old_id))
                                 .copied()
                                 .collect();
 
-                            if !bad_ids.is_empty() {
-                                bad_ids.iter().for_each(|id| {
+                            if !old_ids.is_empty() {
+                                old_ids.iter().for_each(|id| {
                                     eprintln!("ID {} doesn't exist in the bms file.", as_str(*id));
                                 });
 
                                 continue;
                             }
 
+                            // Skip invalid keysounds
                             if ids.iter().any(|old_id| !bms.has_keysound(*old_id)) {
                                 continue;
                             }
 
-                            ids.iter().for_each(|old_id| {
-                                println!("Replacing {} with {}", as_str(*old_id), as_str(id));
+                            let new_id_upper = &new_id_line.to_uppercase();
 
-                                // Delete the old keysound
-                                bms.keysounds.retain(|ks| ks.keysound_id != *old_id);
+                            if let Ok(new_id) = as_id(new_id_upper) {
+                                old_ids.iter().for_each(|old_id| {
+                                    println!("Replacing {} with {}", as_str(*old_id), as_str(id));
 
-                                for line in &mut bms.tail {
-                                    if !note_regex.is_match(line) {
-                                        continue;
+                                    // Delete the old keysound
+                                    bms.keysounds.retain(|ks| ks.keysound_id != *old_id);
+
+                                    for line in &mut bms.tail {
+                                        line.replace_keysounds(*old_id, new_id)
                                     }
+                                });
 
-                                    let channel = line.get(4..6).unwrap();
-
-                                    if channel != "01" && channel.chars().nth(1).unwrap() != '1' {
-                                        continue;
-                                    }
-
-                                    let old_id_str = as_str(*old_id);
-
-                                    if let Some(pos) = line.find(':') {
-                                        let prefix = &line[..=pos]; // includes ':'
-                                        let mut new_body =
-                                            String::with_capacity(line.len() - pos - 1);
-
-                                        let body = &line[pos + 1..];
-
-                                        for i in (0..body.len()).step_by(2) {
-                                            let chunk = &body[i..i + 2];
-                                            if chunk == old_id_str {
-                                                new_body.push_str(&id_line.to_uppercase());
-                                            } else {
-                                                new_body.push_str(chunk);
-                                            }
-                                        }
-
-                                        line.replace_range(pos + 1.., &new_body);
-                                    }
+                                if let Err(e) = bms.save() {
+                                    eprintln!("Error details: {}", e);
                                 }
-                            });
-
-                            if let Err(e) = bms.save() {
-                                eprintln!("Error details: {}", e);
+                            } else {
+                                eprintln!("Error converting id {}.", new_id_upper);
                             }
                         }
                         Err(e) => eprintln!("Error getting input ids: {}", e),
@@ -348,6 +331,23 @@ fn main() {
                     continue;
                 }
             }
+            Command::HandleUnused => {
+                let unused_keysounds: Vec<&Keysound> = bms
+                    .keysounds
+                    .iter()
+                    .filter(|keysound| !bms.has_keysound(keysound.keysound_id))
+                    .collect();
+
+                println!(
+                    "The following keysounds are unused: {:?}",
+                    unused_keysounds
+                        .to_owned()
+                        .iter()
+                        .map(|keysound| keysound.keysound_id)
+                        .collect::<Vec<u64>>()
+                );
+            }
+
             Command::Merge => {
                 //
                 continue;

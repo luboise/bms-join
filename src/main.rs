@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    fmt::Display,
+    fs,
     io::{self, BufRead, BufReader, Write},
     num::ParseIntError,
     path::PathBuf,
@@ -28,9 +30,11 @@ impl Keysound {
             keysound_file,
         })
     }
+}
 
-    pub fn to_string(&self) -> String {
-        format!("#WAV{} {}", as_str(self.keysound_id), self.keysound_file)
+impl Display for Keysound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#WAV{} {}", as_str(self.keysound_id), self.keysound_file)
     }
 }
 
@@ -120,6 +124,14 @@ impl BMSFile {
         &self.keysounds
     }
 
+    fn get_unused_keysounds(&self) -> Vec<Keysound> {
+        self.keysounds
+            .iter()
+            .filter(|keysound| !self.uses_keysound(keysound.keysound_id))
+            .map(|keysound| keysound.clone())
+            .collect::<Vec<Keysound>>()
+    }
+
     fn reload(&mut self) -> Result<(), std::io::Error> {
         println!("Reloading {}", self.path.display());
 
@@ -186,6 +198,18 @@ fn get_next_command() -> Command {
         'u' => Command::HandleUnused,
         'q' => Command::Quit,
         val => Command::Unknown(val),
+    }
+}
+
+fn get_choice() -> bool {
+    let mut line = String::new();
+
+    match io::stdin().read_line(&mut line) {
+        Ok(_) => line.to_lowercase().starts_with("y"),
+        Err(_) => {
+            eprintln!("{}", line);
+            false
+        }
     }
 }
 
@@ -277,6 +301,7 @@ fn main() {
                         eprintln!("Error details: {}", e);
                         continue;
                     }
+
                     if !bms.has_keysound(id) {
                         eprintln!("No keysound exists with id {}", as_str(id));
                         continue;
@@ -339,21 +364,82 @@ fn main() {
                     continue;
                 }
             }
-            Command::HandleUnused => {
-                let unused_keysounds: Vec<&Keysound> = bms
-                    .keysounds
-                    .iter()
-                    .filter(|keysound| !bms.uses_keysound(keysound.keysound_id))
-                    .collect();
 
-                println!(
-                    "The following keysounds are unused: {:?}",
-                    unused_keysounds
-                        .to_owned()
+            Command::HandleUnused => {
+                if let Err(e) = bms.reload() {
+                    eprintln!("Error details: {}", e);
+                    continue;
+                }
+
+                let unused_keysounds = bms.get_unused_keysounds();
+
+                if unused_keysounds.is_empty() {
+                    println!("No unused keysounds are present in the .bms file.");
+
+                    continue;
+                }
+
+                println!("The following keysounds are unused:");
+
+                unused_keysounds
+                    .iter()
+                    .for_each(|keysound| println!("{}", keysound));
+
+                print!("\nWould you like to remove them from the .bms file (y/n)? ");
+                io::stdout().flush().expect("Unable to flush stdout.");
+
+                if get_choice() {
+                    print!(
+                        "\nWould you like to delete the corresponding audio files for the unused keysounds? (y/n)? "
+                    );
+
+                    io::stdout().flush().expect("Unable to flush stdout.");
+
+                    let delete_files = get_choice();
+
+                    let unused_ids: Vec<u64> = unused_keysounds
                         .iter()
-                        .map(|keysound| as_str(keysound.keysound_id))
-                        .collect::<Vec<String>>()
-                );
+                        .map(|keysound| keysound.keysound_id)
+                        .collect();
+
+                    bms.keysounds.retain(|keysound| {
+                        let keep = !unused_ids.contains(&keysound.keysound_id);
+
+                        if !keep && delete_files {
+                            let file_path = PathBuf::from(keysound.keysound_file.clone());
+
+                            if file_path.exists() {
+                                if file_path.is_file() {
+                                    if let Err(e) = fs::remove_file(&file_path) {
+                                        eprintln!("Error removing {}: {}", file_path.display(), e);
+
+                                        // Keep the keysound if theres an error deleting the file
+                                        return true;
+                                    }
+                                } else {
+                                    eprintln!(
+                                        "File {} exists, but is not a regular file.",
+                                        as_str(keysound.keysound_id)
+                                    );
+
+                                    // Keep the keysound if theres an error deleting the file
+                                    return true;
+                                }
+                            } else {
+                                eprintln!(
+                                    "Skipping deletion of file {} (doesn't exist)",
+                                    file_path.display()
+                                );
+                            }
+                        }
+
+                        keep
+                    });
+
+                    if let Err(e) = bms.save() {
+                        eprintln!("Error details: {}", e);
+                    }
+                }
             }
 
             Command::Merge => {

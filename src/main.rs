@@ -163,7 +163,8 @@ impl BMSFile {
 pub enum Command {
     Replace,
     Merge,
-    HandleUnused,
+    RemoveUnusedKeysounds,
+    RemoveUnusedFiles,
     Quit,
     Unknown(char),
     Empty,
@@ -173,7 +174,8 @@ fn get_next_command() -> Command {
     println!(
         "\nWhat would you like to do:
         r - Replace one or more keysounds with another one
-        u - View unused keysounds.
+        u - Modify unused keysounds.
+        a - Remove unused audio.
         q - Quit the program\n\n"
     );
 
@@ -195,8 +197,9 @@ fn get_next_command() -> Command {
     match input.chars().next().unwrap() {
         'r' => Command::Replace,
         'm' => Command::Merge,
-        'u' => Command::HandleUnused,
+        'u' => Command::RemoveUnusedKeysounds,
         'q' => Command::Quit,
+        'a' => Command::RemoveUnusedFiles,
         val => Command::Unknown(val),
     }
 }
@@ -364,8 +367,7 @@ fn main() {
                     continue;
                 }
             }
-
-            Command::HandleUnused => {
+            Command::RemoveUnusedKeysounds => {
                 if let Err(e) = bms.reload() {
                     eprintln!("Error details: {}", e);
                     continue;
@@ -447,7 +449,6 @@ fn main() {
                     }
                 }
             }
-
             Command::Merge => {
                 //
                 continue;
@@ -455,6 +456,116 @@ fn main() {
             Command::Unknown(c) => eprintln!("Unknown command: {}", c),
             Command::Empty => continue,
             Command::Quit => quit = true,
+            Command::RemoveUnusedFiles => {
+                // Reload after getting user input
+                if let Err(e) = bms.reload() {
+                    eprintln!("Error details: {}", e);
+                    continue;
+                }
+
+                let file_extensions = ["ogg", "wav"];
+
+                let parent_dir = bms.path.parent().unwrap();
+
+                let keysound_names = bms
+                    .keysounds
+                    .iter()
+                    .map(|ks| ks.keysound_file.clone())
+                    .collect::<Vec<String>>();
+
+                let unused_files = fs::read_dir(parent_dir)
+                    .unwrap()
+                    .filter_map(|entry| {
+                        let entry = entry.ok()?;
+
+                        let path = entry.path();
+
+                        let extension = path.extension().and_then(|path| path.to_str())?;
+
+                        if file_extensions.contains(&extension) {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|path| {
+                        !keysound_names.contains(
+                            &path
+                                .file_name()
+                                .and_then(|val| val.to_str())
+                                .map(|val| val.to_string())
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Vec<PathBuf>>();
+
+                if unused_files.is_empty() {
+                    println!("No unused files found.");
+                    continue;
+                }
+                unused_files.iter().for_each(|file| {
+                    println!("{}", file.display());
+                });
+
+                println!(
+                    "\n{} unused files were found.\nWould you like to delete them (y/n)?    ",
+                    unused_files.len()
+                );
+                io::stdout().flush().expect("Unable to flush stdout.");
+
+                if get_choice() {
+                    println!("Deleted the fuckers.");
+
+                    unused_files.iter().for_each(|f| {
+                        if f.is_file() {
+                            if let Err(e) = fs::remove_file(f) {
+                                eprintln!("Error removing {}: {}", f.display(), e);
+                            }
+
+                            println!("Removed {}", f.display());
+                        } else {
+                            eprintln!("File {} exists, but is not a regular file.", f.display());
+                        }
+                    });
+                }
+
+                /*
+
+                let unused_files = files
+                    .iter()
+                    .filter(|path| match path.file_name() {
+                        None => false,
+                        Some(file_name) => {
+                            keysound_names.contains(&file_name.to_str().unwrap().into())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                dbg!(unused_files);
+
+                files.retain(f);
+
+                let unused_files = bms
+                    .keysounds
+                    .iter()
+                    .filter_map(|ks| {
+                        if file_extensions
+                            .iter()
+                            .any(|ext| ks.keysound_file.to_lowercase().ends_with(ext))
+                        {
+                            Some(ks.keysound_file.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                dbg!(&files);
+
+                dbg!(unused_files);
+
+                */
+            }
         }
     }
 }
